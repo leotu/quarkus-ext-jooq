@@ -83,7 +83,9 @@ public class JooqProcessor {
             BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
             BuildProducer<UnremovableBeanBuildItem> unremovableBeans, JooqConfig jooqConfig,
             BuildProducer<GeneratedBeanBuildItem> generatedBean, AgroalBuildTimeConfig agroalBuildTimeConfig) {
-
+        if (isUnconfigured(jooqConfig)) {
+            return null;
+        }
         reflectiveClass.produce(new ReflectiveClassBuildItem(true, false, AbstractDslContextProducer.class));
         reflectiveClass.produce(new ReflectiveClassBuildItem(false, true, LoggerListener.class));
 
@@ -98,15 +100,23 @@ public class JooqProcessor {
 
     @Record(ExecutionTime.RUNTIME_INIT)
     @BuildStep
-    void configureDataSource(JooqTemplate template, DataSourceInitializedBuildItem dataSourceInitialized,
+    void configureDataSource(JooqTemplate template,
+            DataSourceInitializedBuildItem dataSourceInitialized,
             BuildProducer<JooqInitializedBuildItem> jooqInitialized, JooqConfig jooqConfig) {
-
-        if (!isPresentDialect(jooqConfig.defaultConfig) && jooqConfig.namedConfig.isEmpty()) {
-            // No jOOQ has been configured so bail out
-            log.info("No jOOQ has been configured");
+        if (isUnconfigured(jooqConfig)) {
             return;
         }
         jooqInitialized.produce(new JooqInitializedBuildItem());
+    }
+
+    private boolean isUnconfigured(JooqConfig jooqConfig) {
+        if (!isPresentDialect(jooqConfig.defaultConfig) && jooqConfig.namedConfig.isEmpty()) {
+            // No jOOQ has been configured so bail out
+            log.debug("No jOOQ has been configured");
+            return true;
+        } else {
+            return false;
+        }
     }
 
     private void createDslContextProducerBean(BuildProducer<GeneratedBeanBuildItem> generatedBean,

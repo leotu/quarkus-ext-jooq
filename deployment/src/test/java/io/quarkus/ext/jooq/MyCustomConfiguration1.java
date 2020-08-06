@@ -4,7 +4,7 @@ import io.quarkus.ext.jooq.runtime.JooqCustomContext;
 
 /**
  * 
- * @author <a href="mailto:leo.tu.taipei@gmail.com">Leo Tu</a>
+ * @author Leo Tu
  */
 public class MyCustomConfiguration1 implements JooqCustomContext {
 }

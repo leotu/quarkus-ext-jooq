@@ -5,7 +5,7 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.Date;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -27,19 +27,25 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
+import io.quarkus.ext.jooq.demo.DefaultCatalog;
+import io.quarkus.ext.jooq.demo.Public;
+import io.quarkus.ext.jooq.demo.tables.QDemo;
+import io.quarkus.ext.jooq.demo.tables.pojos.Demo;
+import io.quarkus.ext.jooq.demo.tables.records.RDemo;
 import io.quarkus.runtime.ShutdownEvent;
 import io.quarkus.runtime.StartupEvent;
 import io.quarkus.test.QuarkusUnitTest;
 
 /**
  * 
- * @author <a href="mailto:leo.tu.taipei@gmail.com">Leo Tu</a>
+ * @author Leo Tu
  */
-//@Disabled
+@Disabled
 public class JooqTest {
     private static final Logger LOGGER = Logger.getLogger(JooqTest.class);
 
@@ -65,25 +71,27 @@ public class JooqTest {
     @AfterAll
     static public void stopDatabase() {
         LOGGER.debug("Stop H2 server..." + server);
+        try {
+            Thread.sleep(1000 * 1); // waiting for destroy
+        } catch (Exception e) {
+            LOGGER.warn(e.toString());
+        }
         if (server != null) {
             server.stop();
             server = null;
         }
-        // while (true) { // only for GUI tool to view data
-        // try {
-        // Thread.sleep(100);
-        // } catch (InterruptedException e) {
-        // e.printStackTrace();
-        // }
-        // }
     }
 
     @Order(10)
     @RegisterExtension
-    static final QuarkusUnitTest config = new QuarkusUnitTest() //
-            .setArchiveProducer(() -> ShrinkWrap.create(JavaArchive.class) //
-                    .addAsResource("application.properties", "application.properties") //
-                    .addClasses(TestBean.class, MyCustomConfigurationFactory.class));
+    static final QuarkusUnitTest config = new QuarkusUnitTest()
+            .setArchiveProducer(() -> ShrinkWrap.create(JavaArchive.class)
+                    .addAsResource("application.properties", "application.properties")
+                    .addClasses(TestBean.class,
+                            MyCustomConfigurationFactory.class,
+                            MyCustomConfiguration1.class,
+                            QDemo.class, RDemo.class, Demo.class,
+                            Public.class, DefaultCatalog.class));
 
     @Inject
     TestBean testBean;
@@ -99,8 +107,12 @@ public class JooqTest {
     // }
 
     @Test
-    public void test1() {
-        LOGGER.info("BEGIN test1...");
+    public void testEntry() {
+        LOGGER.info("BEGIN...");
+        if (testBean == null) {
+            LOGGER.error("Inject testBean is null !");
+            return;
+        }
         try {
             testBean.testConnection();
             //
@@ -118,7 +130,7 @@ public class JooqTest {
         } catch (Exception e) {
             LOGGER.error("", e);
         } finally {
-            LOGGER.info("END test1.");
+            LOGGER.info("END.");
         }
     }
 
@@ -151,8 +163,8 @@ public class JooqTest {
          */
         void onStart(@Observes StartupEvent event) {
             LOGGER.debug("onStart, event=" + event);
-            action = new ServiceAction(dsl, "name00", 10);
-            action1 = new ServiceAction(dsl1, "name11", 15);
+            action = new ServiceAction(dsl, "action_", 10);
+            action1 = new ServiceAction(dsl1, "action1_", 15);
         }
 
         void onStop(@Observes ShutdownEvent event) {
@@ -302,7 +314,6 @@ public class JooqTest {
             testDelete1();
             testCount1();
         }
-
     }
 
     static class ServiceAction {
@@ -325,14 +336,15 @@ public class JooqTest {
 
         void createDDL() throws Exception {
             String table = QDemo.$.getName();
-            String ddl = "" + //
-                    "CREATE TABLE " + table + "(" + //
-                    " id char(32) NOT NULL," + //
-                    " name varchar(128) NOT NULL," + //
-                    " amount decimal(12,3) ," + //
-                    " created_at timestamp NOT NULL," + //
-                    " PRIMARY KEY (id)" + //
+            String ddl = "CREATE TABLE " + table + "(" +
+                    " id char(32) NOT NULL," +
+                    " name varchar(128) NOT NULL," +
+                    " amount decimal(12,3) ," +
+                    " created_at timestamp NOT NULL," +
+                    " PRIMARY KEY (id)" +
                     ")";
+
+            LOGGER.infov("ddl: {0}", ddl);
 
             try (Connection conn = dsl.parsingConnection()) {
                 Statement stmt = conn.createStatement();
@@ -354,7 +366,7 @@ public class JooqTest {
                     }
                 }
 
-                LOGGER.debugv("createDDL table: {0} success: {1}", table, tableExists);
+                LOGGER.infov("createDDL table: {0} success: {1}", table, tableExists);
                 rs.close();
                 Assertions.assertTrue(tableExists);
             }
@@ -379,11 +391,11 @@ public class JooqTest {
             for (int i = 0; i < loop; i++) {
                 String id = UUID.randomUUID().toString().replaceAll("-", "");
                 int randomNum = ThreadLocalRandom.current().nextInt(0, 9);
-                long row = dsl.insertInto(QDemo.$) //
-                        .set(QDemo.$.id, id) //
-                        .set(QDemo.$.name, prefix + "-" + i) //
-                        .set(QDemo.$.amount, new BigDecimal(12.1 + randomNum)) //
-                        .set(QDemo.$.createdAt, new Date()) //
+                long row = dsl.insertInto(QDemo.$)
+                        .set(QDemo.$.id, id)
+                        .set(QDemo.$.name, prefix + "-" + i)
+                        .set(QDemo.$.amount, new BigDecimal(12.1 + randomNum))
+                        .set(QDemo.$.createdAt, LocalDateTime.now())
                         .execute();
                 LOGGER.debugv("insertData prefix: {0}, i: {1}, row: {2}", prefix, i, row);
                 Assertions.assertEquals(1, row);
@@ -391,41 +403,39 @@ public class JooqTest {
         }
 
         void updateData() throws Exception {
-            long row = dsl.update(QDemo.$) //
-                    .set(QDemo.$.name, prefix + "-" + "5U") //
-                    .set(QDemo.$.createdAt, new Date()) //
-                    .where(QDemo.$.name.eq(prefix + "-" + 5)) //
+            long row = dsl.update(QDemo.$)
+                    .set(QDemo.$.name, prefix + "-" + "5U")
+                    .set(QDemo.$.createdAt, LocalDateTime.now())
+                    .where(QDemo.$.name.eq(prefix + "-" + 5))
                     .execute();
             LOGGER.debugv("updateData prefix: {0}, row: {1}", prefix, row);
             Assertions.assertEquals(1, row);
         }
 
         void queryData() throws Exception {
-            List<Demo> dataList = dsl.select() //
-                    .from(QDemo.$) //
+            List<Demo> dataList = dsl.select()
+                    .from(QDemo.$)
                     .fetchInto(Demo.class);
 
             LOGGER.debugv("queryData prefix: {0}, dataList.size: {1}", prefix, dataList.size());
             Assertions.assertTrue(dataList.size() == loop);
 
-            Demo data = dsl.select() //
-                    .from(QDemo.$) //
-                    .where(QDemo.$.name.eq(prefix + "-" + "5U")) //
+            Demo data = dsl.select()
+                    .from(QDemo.$)
+                    .where(QDemo.$.name.eq(prefix + "-" + "5U"))
                     .fetchOneInto(Demo.class);
             LOGGER.debugv("queryData prefix: {0}, data: {1}", prefix, data);
             Assertions.assertTrue(data != null);
         }
 
         void deleteData() throws Exception {
-            LOGGER.debug("deleteData...");
-            long row = dsl.delete(QDemo.$) //
+            long row = dsl.delete(QDemo.$)
                     .execute();
             LOGGER.debugv("deleteData prefix: {0}, row: {1}", prefix, row);
             Assertions.assertTrue(row == loop);
         }
 
         void countData() throws Exception {
-            LOGGER.debug("countData...");
             long total = dsl.select(DSL.count()).from(QDemo.$).fetchOneInto(long.class);
             // long total = dsl.selectCount().from(QDemo.$).fetchOne(0, long.class);
             LOGGER.debugv("countData prefix: {0}, total: {1}", prefix, total);

@@ -8,21 +8,22 @@ import java.lang.annotation.Target;
 import java.util.Objects;
 
 import javax.inject.Qualifier;
+import javax.sql.DataSource;
 
 import org.jboss.logging.Logger;
 import org.jooq.DSLContext;
-
-import io.agroal.api.AgroalDataSource;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 
 /**
  * Produces DSLContext
  * 
- * @author <a href="mailto:leo.tu.taipei@gmail.com">Leo Tu</a>
+ * @author Leo Tu
  */
 public abstract class AbstractDslContextProducer {
     private static final Logger log = Logger.getLogger(AbstractDslContextProducer.class);
 
-    public DSLContext createDslContext(String sqlDialect, AgroalDataSource dataSource, String customConfiguration) {
+    public DSLContext createDslContext(String sqlDialect, DataSource dataSource, String customConfiguration) {
         Objects.requireNonNull(sqlDialect, "sqlDialect");
         Objects.requireNonNull(dataSource, "dataSource");
 
@@ -36,7 +37,7 @@ public abstract class AbstractDslContextProducer {
             }
             try {
                 Class<?> clazz = cl.loadClass(customConfiguration);
-                JooqCustomContext instance = (JooqCustomContext) clazz.newInstance();
+                JooqCustomContext instance = (JooqCustomContext) clazz.getDeclaredConstructor().newInstance();
                 return createDslContext(sqlDialect, dataSource, instance);
             } catch (Exception e) {
                 log.error(customConfiguration, e);
@@ -45,12 +46,47 @@ public abstract class AbstractDslContextProducer {
         }
     }
 
-    public DSLContext createDslContext(String sqlDialect, AgroalDataSource dataSource,
+    public DSLContext createDslContext(String sqlDialect, DataSource dataSource,
             JooqCustomContext customConfiguration) {
         Objects.requireNonNull(sqlDialect, "sqlDialect");
         Objects.requireNonNull(dataSource, "dataSource");
         Objects.requireNonNull(customConfiguration, "customConfiguration");
-        return DslContextFactory.create(sqlDialect, dataSource, customConfiguration);
+        return create(sqlDialect, dataSource, customConfiguration);
+    }
+
+    private DSLContext create(String sqlDialect, DataSource ds, JooqCustomContext customContext) {
+        DSLContext context;
+        if ("PostgreSQL".equalsIgnoreCase(sqlDialect) || "Postgres".equalsIgnoreCase(sqlDialect)
+                || "PgSQL".equalsIgnoreCase(sqlDialect) || "PG".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.POSTGRES);
+        } else if ("MySQL".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.MYSQL);
+        } else if ("MARIADB".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.MARIADB);
+        } else if ("Oracle".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.DEFAULT);
+        } else if ("SQLServer".equalsIgnoreCase(sqlDialect) || "MSSQL".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.DEFAULT);
+        } else if ("DB2".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.DEFAULT);
+        } else if ("Derby".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.DERBY);
+        } else if ("HSQLDB".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.HSQLDB);
+        } else if ("H2".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.H2);
+        } else if ("Firebird".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.FIREBIRD);
+        } else if ("SQLite".equalsIgnoreCase(sqlDialect)) {
+            context = DSL.using(ds, SQLDialect.SQLITE);
+            //        } else if ("CUBRID".equalsIgnoreCase(sqlDialect)) {
+            //            context = DSL.using(ds, SQLDialect.CUBRID);
+        } else {
+            log.warnv("Undefined sqlDialect: {0}", sqlDialect);
+            context = DSL.using(ds, SQLDialect.DEFAULT);
+        }
+        customContext.apply(context.configuration());
+        return context;
     }
 
     /**

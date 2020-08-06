@@ -1,12 +1,16 @@
 package io.quarkus.ext.jooq.deployment;
 
+import java.util.List;
 import java.util.Map.Entry;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import javax.enterprise.context.ApplicationScoped;
 import javax.enterprise.inject.Default;
 import javax.enterprise.inject.Produces;
 import javax.inject.Inject;
 import javax.inject.Singleton;
+import javax.sql.DataSource;
 
 import org.jboss.jandex.AnnotationInstance;
 import org.jboss.jandex.AnnotationValue;
@@ -16,21 +20,19 @@ import org.jooq.DSLContext;
 import org.jooq.tools.LoggerListener;
 import org.objectweb.asm.Opcodes;
 
-import io.agroal.api.AgroalDataSource;
-import io.quarkus.agroal.deployment.DataSourceInitializedBuildItem;
-import io.quarkus.agroal.runtime.AgroalBuildTimeConfig;
-import io.quarkus.agroal.runtime.AgroalTemplate;
+import io.quarkus.agroal.deployment.JdbcDataSourceBuildItem;
 import io.quarkus.arc.deployment.BeanContainerListenerBuildItem;
 import io.quarkus.arc.deployment.GeneratedBeanBuildItem;
 import io.quarkus.arc.deployment.UnremovableBeanBuildItem;
 import io.quarkus.arc.deployment.UnremovableBeanBuildItem.BeanClassNameExclusion;
 import io.quarkus.arc.processor.DotNames;
+import io.quarkus.datasource.common.runtime.DataSourceUtil;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.ExecutionTime;
 import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
-import io.quarkus.deployment.builditem.substrate.ReflectiveClassBuildItem;
+import io.quarkus.deployment.builditem.nativeimage.ReflectiveClassBuildItem;
 import io.quarkus.deployment.recording.RecorderContext;
 import io.quarkus.deployment.util.HashUtil;
 import io.quarkus.ext.jooq.runtime.AbstractDslContextProducer;
@@ -53,17 +55,18 @@ import io.quarkus.gizmo.ResultHandle;
  * <pre>
  * https://quarkus.io/guides/cdi-reference#supported_features
  * https://github.com/quarkusio/gizmo
+ * https://quarkus.io/guides/datasource
  * </pre>
  * 
- * @author <a href="mailto:leo.tu.taipei@gmail.com">Leo Tu</a>
+ * @author Leo Tu
  */
 public class JooqProcessor {
     private static final Logger log = Logger.getLogger(JooqProcessor.class);
 
     private static final DotName DSL_CONTEXT_QUALIFIER = DotName.createSimple(DslContextQualifier.class.getName());
 
-    private final String dslContextProducerClassName = AbstractDslContextProducer.class.getPackage().getName() + "."
-            + "DslContextProducer";
+    private final String dslContextProducerClassName = AbstractDslContextProducer.class.getPackage().getName()
+            + ".DslContextProducer";
 
     /**
      * Register a extension capability and feature
@@ -71,8 +74,7 @@ public class JooqProcessor {
      * @return jOOQ feature build item
      */
     @Record(ExecutionTime.STATIC_INIT)
-    @BuildStep(providesCapabilities = "io.quarkus.ext.jooq")
-    FeatureBuildItem featureBuildItem() {
+    FeatureBuildItem feature() {
         return new FeatureBuildItem("jooq");
     }
 
@@ -82,7 +84,8 @@ public class JooqProcessor {
     BeanContainerListenerBuildItem build(RecorderContext recorder, JooqTemplate template,
             BuildProducer<ReflectiveClassBuildItem> reflectiveClass,
             BuildProducer<UnremovableBeanBuildItem> unremovableBeans, JooqConfig jooqConfig,
-            BuildProducer<GeneratedBeanBuildItem> generatedBean, AgroalBuildTimeConfig agroalBuildTimeConfig) {
+            BuildProducer<GeneratedBeanBuildItem> generatedBean,
+            List<JdbcDataSourceBuildItem> jdbcDataSourceBuildItems) {
         if (isUnconfigured(jooqConfig)) {
             return null;
         }
@@ -93,7 +96,7 @@ public class JooqProcessor {
             log.warn("No default sql-dialect been defined");
         }
 
-        createDslContextProducerBean(generatedBean, unremovableBeans, jooqConfig, agroalBuildTimeConfig);
+        createDslContextProducerBean(generatedBean, unremovableBeans, jooqConfig, jdbcDataSourceBuildItems);
         return new BeanContainerListenerBuildItem(template.addContainerCreatedListener(
                 (Class<? extends AbstractDslContextProducer>) recorder.classProxy(dslContextProducerClassName)));
     }
@@ -101,7 +104,6 @@ public class JooqProcessor {
     @Record(ExecutionTime.RUNTIME_INIT)
     @BuildStep
     void configureDataSource(JooqTemplate template,
-            DataSourceInitializedBuildItem dataSourceInitialized,
             BuildProducer<JooqInitializedBuildItem> jooqInitialized, JooqConfig jooqConfig) {
         if (isUnconfigured(jooqConfig)) {
             return;
@@ -121,7 +123,7 @@ public class JooqProcessor {
 
     private void createDslContextProducerBean(BuildProducer<GeneratedBeanBuildItem> generatedBean,
             BuildProducer<UnremovableBeanBuildItem> unremovableBeans, JooqConfig jooqConfig,
-            AgroalBuildTimeConfig dataSourceConfig) {
+            List<JdbcDataSourceBuildItem> jdbcDataSourceBuildItems) {
         ClassOutput classOutput = new ClassOutput() {
             @Override
             public void write(String name, byte[] data) {
@@ -134,32 +136,21 @@ public class JooqProcessor {
                 .className(dslContextProducerClassName).superClass(AbstractDslContextProducer.class).build();
         classCreator.addAnnotation(ApplicationScoped.class);
 
+        Set<String> dataSourceNames = jdbcDataSourceBuildItems.stream().map(JdbcDataSourceBuildItem::getName)
+                .collect(Collectors.toSet());
+
         JooqItemConfig defaultConfig = jooqConfig.defaultConfig;
         if (isPresentDialect(defaultConfig)) {
-            if (!dataSourceConfig.defaultDataSource.driver.isPresent()) {
-                log.warn("Default dataSource not found");
-                System.err.println(">>> Default dataSource not found");
+            if (!DataSourceUtil.hasDefault(dataSourceNames)) {
+                log.warn("Default data source not found");
             }
             if (defaultConfig.datasource.isPresent()
-                    && !AgroalTemplate.DEFAULT_DATASOURCE_NAME.equals(defaultConfig.datasource.get())) {
-                log.warn("Skip default dataSource name: " + defaultConfig.datasource.get());
+                    && !DataSourceUtil.isDefault(defaultConfig.datasource.get())) {
+                log.warnv("Skip default data source name: {}", defaultConfig.datasource.get());
             }
             String dsVarName = "defaultDataSource";
 
-            // FIXME: Lazy Initialize DataSource ?
-            // Type[] args = new Type[] {
-            // Type.create(DotName.createSimple(AgroalDataSource.class.getName()),
-            // Kind.CLASS) };
-            // ParameterizedType type =
-            // ParameterizedType.create(DotName.createSimple(Instance.class.getName()),
-            // args, null);
-            // log.debug("type: " + type); //
-            // javax.enterprise.inject.Instance<io.agroal.api.AgroalDataSource>
-            // FieldCreator defaultDataSourceCreator = classCreator.getFieldCreator(varName,
-            // DescriptorUtils.typeToString(type))
-            // .setModifiers(Opcodes.ACC_MODULE);
-
-            FieldCreator defaultDataSourceCreator = classCreator.getFieldCreator(dsVarName, AgroalDataSource.class)
+            FieldCreator defaultDataSourceCreator = classCreator.getFieldCreator(dsVarName, DataSource.class)
                     .setModifiers(Opcodes.ACC_MODULE);
 
             defaultDataSourceCreator.addAnnotation(Default.class);
@@ -177,7 +168,7 @@ public class JooqProcessor {
             ResultHandle dialectRH = defaultDslContextMethodCreator.load(dialect);
 
             ResultHandle dataSourceRH = defaultDslContextMethodCreator.readInstanceField(
-                    FieldDescriptor.of(classCreator.getClassName(), dsVarName, AgroalDataSource.class.getName()),
+                    FieldDescriptor.of(classCreator.getClassName(), dsVarName, DataSource.class.getName()),
                     defaultDslContextMethodCreator.getThis());
 
             if (defaultConfig.configurationInject.isPresent()) {
@@ -198,7 +189,7 @@ public class JooqProcessor {
                 defaultDslContextMethodCreator.returnValue( //
                         defaultDslContextMethodCreator.invokeVirtualMethod(
                                 MethodDescriptor.ofMethod(AbstractDslContextProducer.class, "createDslContext",
-                                        DSLContext.class, String.class, AgroalDataSource.class,
+                                        DSLContext.class, String.class, DataSource.class,
                                         JooqCustomContext.class),
                                 defaultDslContextMethodCreator.getThis(), dialectRH, dataSourceRH, configurationRH));
             } else {
@@ -214,7 +205,7 @@ public class JooqProcessor {
                 defaultDslContextMethodCreator.returnValue( //
                         defaultDslContextMethodCreator.invokeVirtualMethod(
                                 MethodDescriptor.ofMethod(AbstractDslContextProducer.class, "createDslContext",
-                                        DSLContext.class, String.class, AgroalDataSource.class, String.class),
+                                        DSLContext.class, String.class, DataSource.class, String.class),
                                 defaultDslContextMethodCreator.getThis(), dialectRH, dataSourceRH, configurationRH));
             }
         }
@@ -227,20 +218,19 @@ public class JooqProcessor {
                 continue;
             }
             if (!namedConfig.datasource.isPresent()) {
-                log.warnv("(!config.datasource.isPresent()), named: {0}, namedConfig: {1}", named, namedConfig);
+                log.warnv("!namedConfig.datasource.isPresent(), named: {0}, namedConfig: {1}", named, namedConfig);
                 continue;
             }
 
             String dataSourceName = namedConfig.datasource.get();
-            if (!dataSourceConfig.namedDataSources.containsKey(dataSourceName)) {
-                log.warnv("Named: '{0}' dataSource not found", dataSourceName);
-                System.err.println(">>> Named: '" + dataSourceName + "' dataSource not found");
+            if (!dataSourceNames.contains(dataSourceName)) {
+                log.warnv("Named: {0} data source not found", dataSourceName);
             }
 
             String suffix = HashUtil.sha1(named);
             String dsVarName = "dataSource_" + suffix;
 
-            FieldCreator dataSourceCreator = classCreator.getFieldCreator(dsVarName, AgroalDataSource.class)
+            FieldCreator dataSourceCreator = classCreator.getFieldCreator(dsVarName, DataSource.class)
                     .setModifiers(Opcodes.ACC_MODULE);
             dataSourceCreator.addAnnotation(Inject.class);
             dataSourceCreator.addAnnotation(AnnotationInstance.create(DotNames.NAMED, null,
@@ -259,7 +249,7 @@ public class JooqProcessor {
             ResultHandle dialectRH = namedDslContextMethodCreator.load(namedConfig.dialect);
 
             ResultHandle dataSourceRH = namedDslContextMethodCreator.readInstanceField(
-                    FieldDescriptor.of(classCreator.getClassName(), dsVarName, AgroalDataSource.class.getName()),
+                    FieldDescriptor.of(classCreator.getClassName(), dsVarName, DataSource.class.getName()),
                     namedDslContextMethodCreator.getThis());
 
             if (namedConfig.configurationInject.isPresent()) {
@@ -279,7 +269,7 @@ public class JooqProcessor {
 
                 namedDslContextMethodCreator.returnValue(namedDslContextMethodCreator.invokeVirtualMethod(
                         MethodDescriptor.ofMethod(AbstractDslContextProducer.class, "createDslContext",
-                                DSLContext.class, String.class, AgroalDataSource.class, JooqCustomContext.class),
+                                DSLContext.class, String.class, DataSource.class, JooqCustomContext.class),
                         namedDslContextMethodCreator.getThis(), dialectRH, dataSourceRH, configurationRH));
             } else {
                 ResultHandle configurationRH = namedConfig.configuration.isPresent()
@@ -293,7 +283,7 @@ public class JooqProcessor {
 
                 namedDslContextMethodCreator.returnValue(namedDslContextMethodCreator.invokeVirtualMethod(
                         MethodDescriptor.ofMethod(AbstractDslContextProducer.class, "createDslContext",
-                                DSLContext.class, String.class, AgroalDataSource.class, String.class),
+                                DSLContext.class, String.class, DataSource.class, String.class),
                         namedDslContextMethodCreator.getThis(), dialectRH, dataSourceRH, configurationRH));
             }
         }

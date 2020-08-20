@@ -114,7 +114,7 @@ public class JooqProcessor {
     private boolean isUnconfigured(JooqConfig jooqConfig) {
         if (!isPresentDialect(jooqConfig.defaultConfig) && jooqConfig.namedConfig.isEmpty()) {
             // No jOOQ has been configured so bail out
-            log.debug("No jOOQ has been configured");
+            log.info("No jOOQ has been configured");
             return true;
         } else {
             return false;
@@ -156,7 +156,6 @@ public class JooqProcessor {
             defaultDataSourceCreator.addAnnotation(Default.class);
             defaultDataSourceCreator.addAnnotation(Inject.class);
 
-            //
             String dialect = defaultConfig.dialect;
             MethodCreator defaultDslContextMethodCreator = classCreator.getMethodCreator("createDefaultDslContext",
                     DSLContext.class);
@@ -186,7 +185,7 @@ public class JooqProcessor {
                         .of(classCreator.getClassName(), injectVarName, JooqCustomContext.class.getName()),
                         defaultDslContextMethodCreator.getThis());
 
-                defaultDslContextMethodCreator.returnValue( //
+                defaultDslContextMethodCreator.returnValue(
                         defaultDslContextMethodCreator.invokeVirtualMethod(
                                 MethodDescriptor.ofMethod(AbstractDslContextProducer.class, "createDslContext",
                                         DSLContext.class, String.class, DataSource.class,
@@ -202,7 +201,7 @@ public class JooqProcessor {
                             new BeanClassNameExclusion(defaultConfig.configuration.get())));
                 }
 
-                defaultDslContextMethodCreator.returnValue( //
+                defaultDslContextMethodCreator.returnValue(
                         defaultDslContextMethodCreator.invokeVirtualMethod(
                                 MethodDescriptor.ofMethod(AbstractDslContextProducer.class, "createDslContext",
                                         DSLContext.class, String.class, DataSource.class, String.class),

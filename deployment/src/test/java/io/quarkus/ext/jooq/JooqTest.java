@@ -42,6 +42,7 @@ import io.quarkus.runtime.StartupEvent;
 import io.quarkus.test.QuarkusUnitTest;
 
 /**
+ * VM arguments add "-Djava.util.logging.manager=org.jboss.logmanager.LogManager"
  * 
  * @author Leo Tu
  */
@@ -87,6 +88,7 @@ public class JooqTest {
     static final QuarkusUnitTest config = new QuarkusUnitTest()
             .setArchiveProducer(() -> ShrinkWrap.create(JavaArchive.class)
                     .addAsResource("application.properties", "application.properties")
+                    //.addAsResource("application-legacy.properties", "application.properties")
                     .addClasses(TestBean.class,
                             MyCustomConfigurationFactory.class,
                             MyCustomConfiguration1.class,
@@ -163,8 +165,8 @@ public class JooqTest {
          */
         void onStart(@Observes StartupEvent event) {
             LOGGER.debug("onStart, event=" + event);
-            action = new ServiceAction(dsl, "action_", 10);
-            action1 = new ServiceAction(dsl1, "action1_", 15);
+            action = new ServiceAction(dsl, "action", 10);
+            action1 = new ServiceAction(dsl1, "action1", 15);
         }
 
         void onStop(@Observes ShutdownEvent event) {

@@ -3,7 +3,7 @@
 This is a https://github.com/quarkusio/quarkus[Quarkus] extension for https://github.com/jOOQ/jOOQ[jOOQ].
 
 
-== Version Supported
+== Supported Versions
 Quarkus 1.6.1
 
 jOOQ 3.13.3

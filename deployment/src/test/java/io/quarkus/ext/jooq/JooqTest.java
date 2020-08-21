@@ -1,14 +1,9 @@
 package io.quarkus.ext.jooq;
 
-import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
-import java.sql.Statement;
-import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 
 import javax.annotation.PostConstruct;
 import javax.enterprise.context.ApplicationScoped;
@@ -18,25 +13,30 @@ import javax.inject.Named;
 import javax.transaction.Transactional;
 import javax.transaction.Transactional.TxType;
 
-import org.h2.tools.Server;
 import org.jboss.logging.Logger;
 import org.jboss.shrinkwrap.api.ShrinkWrap;
 import org.jboss.shrinkwrap.api.spec.JavaArchive;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 import io.quarkus.ext.jooq.demo.DefaultCatalog;
-import io.quarkus.ext.jooq.demo.Public;
-import io.quarkus.ext.jooq.demo.tables.QDemo;
-import io.quarkus.ext.jooq.demo.tables.pojos.Demo;
-import io.quarkus.ext.jooq.demo.tables.records.RDemo;
+import io.quarkus.ext.jooq.demo.DefaultSchema;
+import io.quarkus.ext.jooq.demo.tables.QDepartments;
+import io.quarkus.ext.jooq.demo.tables.QDeptEmp;
+import io.quarkus.ext.jooq.demo.tables.QDeptManager;
+import io.quarkus.ext.jooq.demo.tables.QEmployees;
+import io.quarkus.ext.jooq.demo.tables.QSalaries;
+import io.quarkus.ext.jooq.demo.tables.QTitles;
+import io.quarkus.ext.jooq.demo.tables.pojos.Departments;
+import io.quarkus.ext.jooq.demo.tables.pojos.DeptEmp;
+import io.quarkus.ext.jooq.demo.tables.pojos.DeptManager;
+import io.quarkus.ext.jooq.demo.tables.pojos.Employees;
+import io.quarkus.ext.jooq.demo.tables.pojos.Salaries;
+import io.quarkus.ext.jooq.demo.tables.pojos.Titles;
 import io.quarkus.runtime.ShutdownEvent;
 import io.quarkus.runtime.StartupEvent;
 import io.quarkus.test.QuarkusUnitTest;
@@ -46,41 +46,12 @@ import io.quarkus.test.QuarkusUnitTest;
  * 
  * @author Leo Tu
  */
-@Disabled
+//@Disabled
 public class JooqTest {
     private static final Logger LOGGER = Logger.getLogger(JooqTest.class);
 
-    /**
-     * http://www.h2database.com/html/main.html
-     */
-    static private Server server;
-
-    @Order(1)
-    @BeforeAll
-    static public void startDatabase() {
-        LOGGER.debug("Start H2 server..." + server);
-        try {
-            server = Server.createTcpServer(new String[] { "-trace", "-tcp", "-tcpAllowOthers", "-tcpPort", "19092" })
-                    .start();
-            Thread.sleep(1000 * 1); // waiting for database to be ready
-        } catch (Exception e) {
-            LOGGER.error("Start H2 server failed", e);
-            throw new RuntimeException(e);
-        }
-    }
-
-    @AfterAll
-    static public void stopDatabase() {
-        LOGGER.debug("Stop H2 server..." + server);
-        try {
-            Thread.sleep(1000 * 1); // waiting for destroy
-        } catch (Exception e) {
-            LOGGER.warn(e.toString());
-        }
-        if (server != null) {
-            server.stop();
-            server = null;
-        }
+    static {
+        System.setProperty("org.jooq.no-logo", String.valueOf(true)); // -Dorg.jooq.no-logo=true
     }
 
     @Order(10)
@@ -88,25 +59,17 @@ public class JooqTest {
     static final QuarkusUnitTest config = new QuarkusUnitTest()
             .setArchiveProducer(() -> ShrinkWrap.create(JavaArchive.class)
                     .addAsResource("application.properties", "application.properties")
-                    //.addAsResource("application-legacy.properties", "application.properties")
                     .addClasses(TestBean.class,
                             MyCustomConfigurationFactory.class,
                             MyCustomConfiguration1.class,
-                            QDemo.class, RDemo.class, Demo.class,
-                            Public.class, DefaultCatalog.class));
+                            Departments.class, DeptEmp.class, DeptManager.class,
+                            Employees.class, Salaries.class, Titles.class,
+                            QDepartments.class, QDeptEmp.class, QDeptManager.class,
+                            QEmployees.class, QSalaries.class, QTitles.class,
+                            DefaultCatalog.class, DefaultSchema.class));
 
     @Inject
     TestBean testBean;
-
-    // @BeforeEach
-    // public void setUp() throws Exception {
-    // LOGGER.debug("setUp...");
-    // }
-    //
-    // @AfterEach
-    // public void tearDown() throws Exception {
-    // LOGGER.debug("tearDown...");
-    // }
 
     @Test
     public void testEntry() {
@@ -118,19 +81,13 @@ public class JooqTest {
         try {
             testBean.testConnection();
             //
-            testBean.testDDL();
-            testBean.testAll();
-
-            // testBean.testInsert();
-            // testBean.testUpdate();
-            // testBean.testQuery();
-            // testBean.testDelete(); // get connection failed if max<=2
-            // testBean.testCount();
-
-            testBean.testDDL1();
-            testBean.testAllService1();
+            testBean.testAllService();
         } catch (Exception e) {
-            LOGGER.error("", e);
+            if ("test-rollback".equals(e.getMessage())) {
+                LOGGER.info(e.getMessage());
+            } else {
+                LOGGER.error("", e);
+            }
         } finally {
             LOGGER.info("END.");
         }
@@ -150,8 +107,7 @@ public class JooqTest {
         @Named("dsl2")
         DSLContext dsl2;
 
-        private ServiceAction action;
-        private ServiceAction action1;
+        private Service service;
 
         @PostConstruct
         void onPostConstruct() {
@@ -165,28 +121,27 @@ public class JooqTest {
          */
         void onStart(@Observes StartupEvent event) {
             LOGGER.debug("onStart, event=" + event);
-            action = new ServiceAction(dsl, "action", 10);
-            action1 = new ServiceAction(dsl1, "action1", 15);
+            service = new Service(dsl);
         }
 
         void onStop(@Observes ShutdownEvent event) {
             LOGGER.debug("onStop, event=" + event);
         }
 
-        // https://github.com/quarkusio/quarkus/issues/2224
-        // public void onTxSuccessEvent(@Observes(during =
-        // TransactionPhase.AFTER_SUCCESS) String msg) {
-        // LOGGER.debug("onTxSuccessEvent, msg=" + msg);
+        // public void onTxProgressEvent(@Observes(during = TransactionPhase.IN_PROGRESS) String msg) {
+        //     LOGGER.debug("IN_PROGRESS, msg=" + msg);
         // }
-        //
-        // public void onTxFailureEvent(@Observes(during =
-        // TransactionPhase.AFTER_FAILURE) String msg) {
-        // LOGGER.debug("onTxFailureEvent, msg=" + msg);
+        // public void onTxBeforeCompletionEvent(@Observes(during = TransactionPhase.BEFORE_COMPLETION) String msg) {
+        //     LOGGER.debug("BEFORE_COMPLETION, msg=" + msg);
         // }
-        //
-        // public void onTxCompletionEvent(@Observes(during =
-        // TransactionPhase.AFTER_COMPLETION) String msg) {
-        // LOGGER.debug("onTxCompletionEvent, msg=" + msg);
+        // public void onTxSuccessEvent(@Observes(during = TransactionPhase.AFTER_SUCCESS) String msg) {
+        //     LOGGER.debug("AFTER_SUCCESS, msg=" + msg);
+        // }
+        // public void onTxFailureEvent(@Observes(during = TransactionPhase.AFTER_FAILURE) String msg) {
+        //     LOGGER.debug("AFTER_FAILURE, msg=" + msg);
+        // }
+        // public void onTxCompletionEvent(@Observes(during = TransactionPhase.AFTER_COMPLETION) String msg) {
+        //     LOGGER.debug("AFTER_COMPLETION, msg=" + msg);
         // }
 
         void testConnection() throws Exception {
@@ -205,6 +160,7 @@ public class JooqTest {
                 DatabaseMetaData dmd = conn.getMetaData();
                 LOGGER.debugv("dsl1, databaseProductName: {0}, databaseProductVersion: {1}",
                         dmd.getDatabaseProductName(), dmd.getDatabaseProductVersion());
+                listTableTypes(conn);
             } catch (Exception e) {
                 LOGGER.error("dsl1.getConnection", e);
                 throw e;
@@ -221,227 +177,126 @@ public class JooqTest {
             }
         }
 
+        private void listTableTypes(Connection conn) throws Exception {
+            DatabaseMetaData dmd = conn.getMetaData();
+            try (ResultSet ttRs = dmd.getTableTypes()) {
+                int columnCount = ttRs.getMetaData().getColumnCount();
+                while (ttRs.next()) {
+                    for (int columnIndex = 1; columnIndex <= columnCount; columnIndex++) {
+                        String tableType = ttRs.getString(columnIndex);
+                        LOGGER.debugv("tableType: {0}", tableType);
+                    }
+                }
+            }
+        }
+
         // === (default)
-        void testDDL() throws Exception {
-            action.createDDL();
-        }
-
-        @Transactional
-        void testInsert() throws Exception {
-            action.insertData();
-        }
-
-        @Transactional
-        void testUpdate() throws Exception {
-            action.updateData();
-        }
-
-        @Transactional(TxType.SUPPORTS)
-        void testQuery() throws Exception {
-            action.queryData();
-        }
-
-        @Transactional(TxType.REQUIRED)
-        void testDelete() throws Exception {
-            action.deleteData();
-        }
-
-        @Transactional(TxType.SUPPORTS)
-        void testCount() throws Exception {
-            action.countData();
-        }
-
         @Transactional(TxType.REQUIRED)
         void testAllService() throws Exception {
-            action.insertData();
-            action.updateData();
-            action.queryData();
-            action.deleteData();
-            action.countData();
-        }
+            List<Departments> queryAll = service.queryAll();
+            Assertions.assertTrue(queryAll.size() > 0);
 
-        @Transactional(TxType.REQUIRED)
-        void testAll() throws Exception {
-            testInsert();
-            testUpdate();
-            testQuery();
-            testDelete();
-            testCount();
-        }
+            Departments testOne = service.queryOne(queryAll.get(0).getDeptNo());
+            Assertions.assertNotNull(testOne);
 
-        // === (1)
-        void testDDL1() throws Exception {
-            action1.createDDL();
-        }
+            Departments newOne = new Departments();
+            newOne.setDeptNo("H911");
+            newOne.setDeptName("Help Dept");
+            long insertOne = service.insertOne(newOne);
+            Assertions.assertEquals(1, insertOne);
 
-        @Transactional
-        void testInsert1() throws Exception {
-            action1.insertData();
-        }
+            long countAll = service.countAll();
+            Assertions.assertTrue(countAll == queryAll.size() + 1);
 
-        @Transactional
-        void testUpdate1() throws Exception {
-            action1.updateData();
-        }
+            Departments updatedOne = newOne.clone();
+            updatedOne.setDeptName("Help Dept 911");
+            long updateOne = service.updateOne(updatedOne);
+            Assertions.assertEquals(1, updateOne);
 
-        @Transactional(TxType.SUPPORTS)
-        void testQuery1() throws Exception {
-            action1.queryData();
-        }
+            Departments queryOne = service.queryOne(updatedOne.getDeptNo());
+            Assertions.assertTrue(queryOne != null);
+            Assertions.assertEquals(queryOne.getDeptName(), updatedOne.getDeptName());
 
-        @Transactional(TxType.REQUIRED)
-        void testDelete1() throws Exception {
-            action1.deleteData();
-        }
+            long deleteOne = service.deleteOne(queryOne.getDeptNo());
+            Assertions.assertEquals(1, deleteOne);
 
-        @Transactional(TxType.SUPPORTS)
-        void testCount1() throws Exception {
-            action1.countData();
-        }
+            long countAll2 = service.countAll();
+            Assertions.assertTrue(countAll2 == queryAll.size());
 
-        @Transactional(TxType.REQUIRED)
-        void testAllService1() throws Exception {
-            action1.insertData();
-            action1.updateData();
-            action1.queryData();
-            action1.deleteData();
-            action1.countData();
-        }
+            long deleteAll = service.deleteAll();
+            Assertions.assertTrue(countAll2 == deleteAll);
 
-        @Transactional(TxType.REQUIRED)
-        void testAll1() throws Exception {
-            testInsert1();
-            testUpdate1();
-            testQuery1();
-            testDelete1();
-            testCount1();
+            long countAll3 = service.countAll();
+            Assertions.assertTrue(countAll3 == 0);
+
+            // rollback
+            throw new RuntimeException("test-rollback");
         }
     }
 
-    static class ServiceAction {
-
+    static class Service {
         final private DSLContext dsl;
-        final private int loop;
-        final private String prefix;
 
-        public ServiceAction(DSLContext dsl, String prefix, int loop) {
+        public Service(DSLContext dsl) {
             this.dsl = dsl;
-            this.prefix = prefix;
-            this.loop = loop;
         }
 
-        public ServiceAction(DSLContext dsl) {
-            this.dsl = dsl;
-            this.prefix = null;
-            this.loop = -1;
-        }
-
-        void createDDL() throws Exception {
-            String table = QDemo.$.getName();
-            String ddl = "CREATE TABLE " + table + "(" +
-                    " id char(32) NOT NULL," +
-                    " name varchar(128) NOT NULL," +
-                    " amount decimal(12,3) ," +
-                    " created_at timestamp NOT NULL," +
-                    " PRIMARY KEY (id)" +
-                    ")";
-
-            LOGGER.infov("ddl: {0}", ddl);
-
-            try (Connection conn = dsl.parsingConnection()) {
-                Statement stmt = conn.createStatement();
-                stmt.execute(ddl);
-                stmt.close();
-                // listTableTypes(conn);
-                ResultSet rs = conn.getMetaData().getTables(null, null, table.toUpperCase(), new String[] { "TABLE" });
-                boolean tableExists = false;
-                while (rs.next()) {
-                    String tableType = rs.getString("TABLE_TYPE");
-                    String tableCatalog = rs.getString("TABLE_CAT");
-                    String tableSchema = rs.getString("TABLE_SCHEM");
-                    String tableName = rs.getString("TABLE_NAME");
-                    // tableType:TABLE, tableCatalog:DEFAULT, tableSchema:PUBLIC, table:demo
-                    LOGGER.debugv("tableType:{0}, tableCatalog:{1}, tableSchema:{2}, table:{3}", tableType,
-                            tableCatalog, tableSchema, table);
-                    if (table.equalsIgnoreCase(tableName)) {
-                        tableExists = true;
-                    }
-                }
-
-                LOGGER.infov("createDDL table: {0} success: {1}", table, tableExists);
-                rs.close();
-                Assertions.assertTrue(tableExists);
-            }
-        }
-
-        @SuppressWarnings("unused")
-        private void listTableTypes(Connection conn) throws Exception {
-            DatabaseMetaData dmd = conn.getMetaData();
-            ResultSet ttRs = dmd.getTableTypes();
-            int columnCount = ttRs.getMetaData().getColumnCount();
-            while (ttRs.next()) {
-                for (int columnIndex = 1; columnIndex <= columnCount; columnIndex++) {
-                    String tableType = ttRs.getString(columnIndex);
-                    // tableType: "EXTERNAL","SYSTEM TABLE","TABLE","TABLE LINK","VIEW"
-                    LOGGER.debugv("tableType: {0}", tableType);
-                }
-            }
-            ttRs.close();
-        }
-
-        void insertData() throws Exception {
-            for (int i = 0; i < loop; i++) {
-                String id = UUID.randomUUID().toString().replaceAll("-", "");
-                int randomNum = ThreadLocalRandom.current().nextInt(0, 9);
-                long row = dsl.insertInto(QDemo.$)
-                        .set(QDemo.$.id, id)
-                        .set(QDemo.$.name, prefix + "-" + i)
-                        .set(QDemo.$.amount, new BigDecimal(12.1 + randomNum))
-                        .set(QDemo.$.createdAt, LocalDateTime.now())
-                        .execute();
-                LOGGER.debugv("insertData prefix: {0}, i: {1}, row: {2}", prefix, i, row);
-                Assertions.assertEquals(1, row);
-            }
-        }
-
-        void updateData() throws Exception {
-            long row = dsl.update(QDemo.$)
-                    .set(QDemo.$.name, prefix + "-" + "5U")
-                    .set(QDemo.$.createdAt, LocalDateTime.now())
-                    .where(QDemo.$.name.eq(prefix + "-" + 5))
+        long insertOne(Departments data) {
+            long row = dsl.insertInto(QDepartments.$)
+                    .set(QDepartments.$.deptNo, data.getDeptNo())
+                    .set(QDepartments.$.deptName, data.getDeptName())
                     .execute();
-            LOGGER.debugv("updateData prefix: {0}, row: {1}", prefix, row);
-            Assertions.assertEquals(1, row);
+            LOGGER.debugv("row: {0}", row);
+            return row;
         }
 
-        void queryData() throws Exception {
-            List<Demo> dataList = dsl.select()
-                    .from(QDemo.$)
-                    .fetchInto(Demo.class);
-
-            LOGGER.debugv("queryData prefix: {0}, dataList.size: {1}", prefix, dataList.size());
-            Assertions.assertTrue(dataList.size() == loop);
-
-            Demo data = dsl.select()
-                    .from(QDemo.$)
-                    .where(QDemo.$.name.eq(prefix + "-" + "5U"))
-                    .fetchOneInto(Demo.class);
-            LOGGER.debugv("queryData prefix: {0}, data: {1}", prefix, data);
-            Assertions.assertTrue(data != null);
-        }
-
-        void deleteData() throws Exception {
-            long row = dsl.delete(QDemo.$)
+        long updateOne(Departments data) {
+            long row = dsl.update(QDepartments.$)
+                    .set(QDepartments.$.deptName, data.getDeptName())
+                    .where(QDepartments.$.deptNo.eq(data.getDeptNo()))
                     .execute();
-            LOGGER.debugv("deleteData prefix: {0}, row: {1}", prefix, row);
-            Assertions.assertTrue(row == loop);
+            LOGGER.debugv("row: {0}", row);
+            return row;
         }
 
-        void countData() throws Exception {
-            long total = dsl.select(DSL.count()).from(QDemo.$).fetchOneInto(long.class);
-            // long total = dsl.selectCount().from(QDemo.$).fetchOne(0, long.class);
-            LOGGER.debugv("countData prefix: {0}, total: {1}", prefix, total);
-            Assertions.assertTrue(total == 0);
+        List<Departments> queryAll() {
+            List<Departments> dataList = dsl.select()
+                    .from(QDepartments.$)
+                    .orderBy(QDepartments.$.deptNo.asc())
+                    .fetchInto(Departments.class);
+            LOGGER.debugv("dataList.size: {0}", dataList.size());
+            return dataList;
+        }
+
+        Departments queryOne(String deptNo) {
+            Departments data = dsl.select()
+                    .from(QDepartments.$)
+                    .where(QDepartments.$.deptNo.eq(deptNo))
+                    .fetchOneInto(Departments.class);
+            LOGGER.debugv("data: {0}", data);
+            return data;
+        }
+
+        long deleteOne(String deptNo) {
+            long row = dsl.delete(QDepartments.$)
+                    .where(QDepartments.$.deptNo.eq(deptNo))
+                    .execute();
+            LOGGER.debugv("row: {0}", row);
+            return row;
+        }
+
+        long deleteAll() {
+            long row = dsl.delete(QDepartments.$)
+                    .execute();
+            LOGGER.debugv("row: {0}", row);
+            return row;
+        }
+
+        long countAll() {
+            long total = dsl.select(DSL.count()).from(QDepartments.$).fetchOneInto(long.class);
+            // long total = dsl.selectCount().from(QDepartments.$).fetchOne(0, long.class);
+            LOGGER.debugv("total: {0}", total);
+            return total;
         }
     }
 }

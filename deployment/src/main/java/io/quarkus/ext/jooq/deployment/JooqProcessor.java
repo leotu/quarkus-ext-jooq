@@ -22,9 +22,9 @@ import org.objectweb.asm.Opcodes;
 
 import io.quarkus.agroal.deployment.JdbcDataSourceBuildItem;
 import io.quarkus.arc.deployment.BeanContainerListenerBuildItem;
+import io.quarkus.arc.deployment.BeanDefiningAnnotationBuildItem;
 import io.quarkus.arc.deployment.GeneratedBeanBuildItem;
 import io.quarkus.arc.deployment.UnremovableBeanBuildItem;
-import io.quarkus.arc.deployment.UnremovableBeanBuildItem.BeanClassNameExclusion;
 import io.quarkus.arc.processor.DotNames;
 import io.quarkus.datasource.common.runtime.DataSourceUtil;
 import io.quarkus.deployment.annotations.BuildProducer;
@@ -73,11 +73,16 @@ public class JooqProcessor {
      *
      * @return jOOQ feature build item
      */
-    @Record(ExecutionTime.STATIC_INIT)
+    @BuildStep
     FeatureBuildItem feature() {
         return new FeatureBuildItem("jooq");
     }
 
+    @BuildStep
+    BeanDefiningAnnotationBuildItem registerAnnotation() {
+        return new BeanDefiningAnnotationBuildItem(DSL_CONTEXT_QUALIFIER);
+    }
+    
     @SuppressWarnings("unchecked")
     @Record(ExecutionTime.STATIC_INIT)
     @BuildStep
@@ -130,7 +135,7 @@ public class JooqProcessor {
                 generatedBean.produce(new GeneratedBeanBuildItem(name, data));
             }
         };
-        unremovableBeans.produce(new UnremovableBeanBuildItem(new BeanClassNameExclusion(dslContextProducerClassName)));
+        unremovableBeans.produce(UnremovableBeanBuildItem.beanClassNames(dslContextProducerClassName));
 
         ClassCreator classCreator = ClassCreator.builder().classOutput(classOutput)
                 .className(dslContextProducerClassName).superClass(AbstractDslContextProducer.class).build();
@@ -197,8 +202,7 @@ public class JooqProcessor {
                         : defaultDslContextMethodCreator.loadNull();
 
                 if (defaultConfig.configuration.isPresent()) {
-                    unremovableBeans.produce(new UnremovableBeanBuildItem(
-                            new BeanClassNameExclusion(defaultConfig.configuration.get())));
+                    unremovableBeans.produce(UnremovableBeanBuildItem.beanClassNames(defaultConfig.configuration.get()));
                 }
 
                 defaultDslContextMethodCreator.returnValue(
@@ -276,8 +280,7 @@ public class JooqProcessor {
                         : namedDslContextMethodCreator.loadNull();
 
                 if (namedConfig.configuration.isPresent()) {
-                    unremovableBeans.produce(
-                            new UnremovableBeanBuildItem(new BeanClassNameExclusion(namedConfig.configuration.get())));
+                    unremovableBeans.produce(UnremovableBeanBuildItem.beanClassNames(namedConfig.configuration.get()));
                 }
 
                 namedDslContextMethodCreator.returnValue(namedDslContextMethodCreator.invokeVirtualMethod(
